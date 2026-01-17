@@ -1,40 +1,65 @@
 #include "cimage.h"
 #include <QFile>
+#include <QFileInfo>
+#include <QBuffer>
 
-CImage::CImage(QObject* parent) {setLoaded(false);}
+CImage::CImage(QObject* parent) : QObject(parent) {setLoaded(false);}
 
 void CImage::loadImage(const QUrl& imgFile) {
     this->imgFile = imgFile;
     QString localpath = imgFile.toLocalFile();
 
     QFile file(localpath);
+
     if (file.open(QIODevice::ReadOnly)) {
         this->b_arr = file.readAll();
-        this->size = b_arr.size();
         setLoaded(true);
-        qDebug() << "Loaded image from " << localpath << " of size " << size;
+
+        // Set MIME type
+        QFileInfo info(localpath);
+        QString ext = info.suffix().toLower();
+        if (ext == "png") m_mimeType = "image/png";
+        else if (ext == "jpg" || ext == "jpeg") m_mimeType = "image/jpeg";
+        else if (ext == "bmp") m_mimeType = "image/bmp";
+        else m_mimeType = "image/png";
+
+        QString dataUrl = "data:" + m_mimeType + ";base64," + QString::fromLatin1(b_arr.toBase64());
+        emit imageLoaded(dataUrl);
+
+        qDebug() << "Loaded image from " << localpath << " of size " << this->b_arr.size();
 
     }
     else {
         setLoaded(false);
         qDebug() << "Failed to load image";
     }
+
+
 }
 
-QImage CImage::encode(const QString& message) {
+QString CImage::encode(const QString& message) {
     if(!_loaded) {
-        return QImage();
+        return QString();
     }
 
     QByteArray msgBytes = message.toUtf8();
 
-    if(size < (size_t)(msgBytes.size() * 8 + 8)) //+8 for null terminator
+    int byteIndex = 0;
+    QImage imgdecode = QImage::fromData(b_arr);
+    if (imgdecode.isNull()) {
+        qDebug() << "Failed to decode image";
+        return QString();  // or "" for decode()
+    }
+    //Use a consistent format
+    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB32);
+    uchar* pixels = imgdecode.bits();
+    int totalSizeInBytes = imgdecode.sizeInBytes();
+
+    if(totalSizeInBytes < (size_t)(msgBytes.size() * 8 + 8)) //+8 for null terminator
     {
         qDebug() << "Message too large to encode";
-        return QImage();
+        return QString();
     }
-
-    int byteIndex = 0;
 
     //Encode each character
     for(int i = 0; i < msgBytes.size(); i++) {
@@ -43,37 +68,49 @@ QImage CImage::encode(const QString& message) {
         //8 bits per character
         for(int bit = 7; bit >= 0; bit--) {
             //Clear LSB bit
-            b_arr[byteIndex] &= 0xFE;
+            pixels[byteIndex] &= 0xFE;
 
             //Set LSB to current bit of c
-            b_arr[byteIndex] |= ((c >> bit) & 1);
+            pixels[byteIndex] |= ((c >> bit) & 1);
             byteIndex++;
         }
     }
 
     //Encoding the null terminator (is this necessary?)
     for(int bit = 7; bit >= 0; bit--) {
-        b_arr[byteIndex] &= 0xFE;
-        b_arr[byteIndex] |= 0;
+        pixels[byteIndex] &= 0xFE;
+        pixels[byteIndex] |= 0;
         byteIndex++;
     }
 
-    return QImage();
+    // Return as data URL (QImage will re-encode as valid PNG)
+    QByteArray byteArray;
+    QBuffer buffer(&byteArray);
+    buffer.open(QIODevice::WriteOnly);
+    imgdecode.save(&buffer, "PNG");
+    this->b_arr = byteArray;
+
+    return "data:image/png;base64," + QString::fromLatin1(byteArray.toBase64());
 }
 
 QString CImage::decode() {
     if (!_loaded) {
         return "";
     }
+    QImage imgdecode = QImage::fromData(b_arr);
+    //Use a consistent format
+    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB32);
+    uchar* pixels = imgdecode.bits();
+    int totalSizeInBytes = imgdecode.sizeInBytes();
 
     //get size of image
     int byteIndex = 0;
-    std::string res = "";
+    QByteArray bar;
 
-    while(byteIndex + 8 <= size) {
+    while(byteIndex + 8 <= totalSizeInBytes) {
         unsigned char c = 0;
         for(int bit = 7; bit >= 0; bit--) {
-            unsigned char byte = b_arr[byteIndex];
+            unsigned char byte = pixels[byteIndex];
             c |= (byte & 1) << bit;
             byteIndex++;
         }
@@ -82,10 +119,10 @@ QString CImage::decode() {
             break;
         }
 
-        res += c;
+        bar.append(c);
     }
-
-    return QString(res.c_str());
+    QString res = QString::fromUtf8(bar);
+    return res;
 }
 
 void CImage::setLoaded(bool v) {
