@@ -51,7 +51,7 @@ QString CImage::encode(const QString& message) {
         return QString();  // or "" for decode()
     }
     //Use a consistent format
-    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB32);
+    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB888);
     uchar* pixels = imgdecode.bits();
     int totalSizeInBytes = imgdecode.sizeInBytes();
 
@@ -64,6 +64,7 @@ QString CImage::encode(const QString& message) {
     //Encode each character
     for(int i = 0; i < msgBytes.size(); i++) {
         unsigned char c = static_cast<unsigned char>(msgBytes.at(i));
+        qDebug() << "Encoding character: " << (char)c;
 
         //8 bits per character
         for(int bit = 7; bit >= 0; bit--) {
@@ -99,7 +100,7 @@ QString CImage::decode() {
     }
     QImage imgdecode = QImage::fromData(b_arr);
     //Use a consistent format
-    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB32);
+    imgdecode = imgdecode.convertToFormat(QImage::Format_RGB888);
     uchar* pixels = imgdecode.bits();
     int totalSizeInBytes = imgdecode.sizeInBytes();
 
@@ -118,8 +119,11 @@ QString CImage::decode() {
         if(c == '\0') {
             break;
         }
-
+        if (c < 255) {
         bar.append(c);
+
+        qDebug() << "Reading character " << (char)c;
+        }
     }
     QString res = QString::fromUtf8(bar);
     return res;
